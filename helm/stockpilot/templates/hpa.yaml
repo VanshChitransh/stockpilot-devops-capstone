@@ -1,0 +1,23 @@
+{{- if .Values.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-backend
+  labels: {{- include "stockpilot.labels" (dict "root" . "component" "backend") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-backend
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        # percent of the pod's CPU *request* (100m), which is why requests are mandatory for HPA
+        target: {type: Utilization, averageUtilization: {{ .Values.hpa.targetCPUUtilizationPercentage }}}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60   # default is 300s; shorter makes the demo watchable
+{{- end }}

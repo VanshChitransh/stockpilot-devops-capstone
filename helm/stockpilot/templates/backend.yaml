@@ -1,0 +1,77 @@
+{{- $root := . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-backend
+  labels: {{- include "stockpilot.labels" (dict "root" $root "component" "backend") | nindent 4 }}
+spec:
+  {{- if not .Values.hpa.enabled }}
+  # with HPA on, replicas is left out so `helm upgrade` doesn't reset what the HPA scaled to
+  replicas: {{ .Values.backend.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels: {{- include "stockpilot.selector" (dict "root" $root "component" "backend") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "stockpilot.labels" (dict "root" $root "component" "backend") | nindent 8 }}
+      annotations:
+        checksum/secret: {{ .Values.postgres | toJson | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "stockpilot.podSecurity" . | nindent 6 }}
+      initContainers:
+        # block until postgres accepts connections, otherwise the first
+        # `alembic upgrade` fails and the pod crash-loops a few times
+        - name: wait-for-postgres
+          image: {{ .Values.postgres.image }}
+          command: ["sh", "-c", "until pg_isready -h {{ .Release.Name }}-postgres -p 5432; do echo waiting for postgres; sleep 2; done"]
+          securityContext:
+            runAsUser: 70
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 50m, memory: 32Mi}
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image }}:{{ .Values.backend.tag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - {name: http, containerPort: 8000}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: {{ .Release.Name }}-db, key: DATABASE_URL}
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 3
+            failureThreshold: 20
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 15
+            failureThreshold: 3
+          resources: {{- toYaml .Values.backend.resources | nindent 12 }}
+          {{- include "stockpilot.containerSecurity" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-backend
+  labels: {{- include "stockpilot.labels" (dict "root" $root "component" "backend") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector: {{- include "stockpilot.selector" (dict "root" $root "component" "backend") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

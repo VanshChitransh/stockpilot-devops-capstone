@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stockpilot
+  labels:
+    app.kubernetes.io/part-of: stockpilot
+    # pod security admission: block privileged pods outright (baseline), and warn on anything
+    # that isn't fully locked down (restricted). postgres needs root at startup, so not enforce=restricted
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: stockpilot

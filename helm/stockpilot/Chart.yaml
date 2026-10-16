@@ -1,0 +1,6 @@
+apiVersion: v2
+name: stockpilot
+description: StockPilot inventory management - React frontend, FastAPI backend, PostgreSQL
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

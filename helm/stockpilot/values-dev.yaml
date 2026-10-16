@@ -1,0 +1,10 @@
+# local kind cluster: images are side-loaded with `kind load`, never pulled
+backend:
+  image: stockpilot-backend
+  tag: dev
+frontend:
+  image: stockpilot-frontend
+  tag: dev
+imagePullPolicy: Never
+ingress:
+  host: stockpilot.localhost

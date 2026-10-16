@@ -1,0 +1,15 @@
+# AWS EKS (see terraform/). Tags + db password are injected by the pipeline:
+#   --set backend.tag=$GITHUB_SHA --set frontend.tag=$GITHUB_SHA --set postgres.password=$DB_PASSWORD
+backend:
+  replicas: 2
+frontend:
+  replicas: 2
+imagePullPolicy: IfNotPresent
+postgres:
+  storage: 5Gi
+ingress:
+  # no host: matches the ingress-nginx LoadBalancer's AWS hostname directly
+  host: ""
+hpa:
+  minReplicas: 2
+  maxReplicas: 8

@@ -1,0 +1,50 @@
+{{- $root := . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-frontend
+  labels: {{- include "stockpilot.labels" (dict "root" $root "component" "frontend") | nindent 4 }}
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: {{- include "stockpilot.selector" (dict "root" $root "component" "frontend") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "stockpilot.labels" (dict "root" $root "component" "frontend") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "stockpilot.podSecurity" . | nindent 6 }}
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image }}:{{ .Values.frontend.tag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            # nginx renders this into its config at startup (see frontend/nginx.conf.template)
+            - {name: BACKEND_HOST, value: {{ .Release.Name }}-backend}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources: {{- toYaml .Values.frontend.resources | nindent 12 }}
+          {{- include "stockpilot.containerSecurity" . | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-frontend
+  labels: {{- include "stockpilot.labels" (dict "root" $root "component" "frontend") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector: {{- include "stockpilot.selector" (dict "root" $root "component" "frontend") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

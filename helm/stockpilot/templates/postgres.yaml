@@ -1,0 +1,84 @@
+{{- $root := . -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-db
+  labels: {{- include "stockpilot.labels" (dict "root" $root "component" "postgres") | nindent 4 }}
+type: Opaque
+stringData:
+  POSTGRES_DB: {{ .Values.postgres.database | quote }}
+  POSTGRES_USER: {{ .Values.postgres.username | quote }}
+  POSTGRES_PASSWORD: {{ .Values.postgres.password | quote }}
+  DATABASE_URL: "postgresql+psycopg://{{ .Values.postgres.username }}:{{ .Values.postgres.password }}@{{ .Release.Name }}-postgres:5432/{{ .Values.postgres.database }}"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-postgres
+  labels: {{- include "stockpilot.labels" (dict "root" $root "component" "postgres") | nindent 4 }}
+spec:
+  selector: {{- include "stockpilot.selector" (dict "root" $root "component" "postgres") | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+# StatefulSet rather than Deployment: stable pod name + its own volume claim,
+# so a rescheduled pod reattaches the same data
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-postgres
+  labels: {{- include "stockpilot.labels" (dict "root" $root "component" "postgres") | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-postgres
+  replicas: 1
+  selector:
+    matchLabels: {{- include "stockpilot.selector" (dict "root" $root "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "stockpilot.labels" (dict "root" $root "component" "postgres") | nindent 8 }}
+      annotations:
+        checksum/secret: {{ .Values.postgres | toJson | sha256sum }}
+    spec:
+      # run as the image's own postgres user (uid 70) from the start instead of
+      # root-then-drop, so the pod passes the "restricted" pod security standard
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          {{- include "stockpilot.containerSecurity" . | nindent 10 }}
+          ports: [{containerPort: 5432, name: postgres}]
+          envFrom:
+            - secretRef: {name: {{ .Release.Name }}-db}
+          env:
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          readinessProbe:
+            exec: {command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: {command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.postgres.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}

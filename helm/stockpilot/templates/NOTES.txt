@@ -1,0 +1,13 @@
+StockPilot {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+  kubectl get pods,svc,ingress,hpa -n {{ .Release.Namespace }}
+{{- if .Values.ingress.enabled }}
+{{- if .Values.ingress.host }}
+  App:     http://{{ .Values.ingress.host }}/
+  Swagger: http://{{ .Values.ingress.host }}/docs
+{{- else }}
+  App: http://<ingress-nginx LoadBalancer hostname>/
+{{- end }}
+{{- else }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ .Release.Name }}-frontend 8080:80
+{{- end }}

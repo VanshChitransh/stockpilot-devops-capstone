@@ -1,0 +1,51 @@
+# image repos are lowercase on purpose: docker refs can't contain capitals.
+# CI overrides the tags with the git commit SHA on every deploy.
+backend:
+  image: ghcr.io/vanshchitransh/stockpilot-backend
+  tag: latest
+  replicas: 2
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 384Mi}
+
+frontend:
+  image: ghcr.io/vanshchitransh/stockpilot-frontend
+  tag: latest
+  replicas: 2
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+
+imagePullPolicy: IfNotPresent
+# GHCR packages are private by default; either make them public or create a
+# docker-registry secret and list it here, e.g. [{name: ghcr-pull}]
+imagePullSecrets: []
+
+postgres:
+  image: postgres:17-alpine
+  database: stockpilot
+  username: stockpilot
+  # demo default only. real environments pass --set postgres.password=... from a CI secret
+  password: stockpilot
+  storage: 1Gi
+  storageClass: ""   # empty = cluster default
+
+ingress:
+  enabled: true
+  className: nginx
+  host: stockpilot.localhost
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 60
+
+monitoring:
+  # only rendered when the Prometheus Operator CRDs exist in the cluster
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+  # grafana sidecar picks up any ConfigMap labelled grafana_dashboard=1
+  dashboard:
+    enabled: true

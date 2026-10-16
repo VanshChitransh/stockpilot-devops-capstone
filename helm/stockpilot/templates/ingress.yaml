@@ -1,0 +1,28 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "stockpilot.labels" (dict "root" . "component" "ingress") | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - {{- with .Values.ingress.host }}
+      host: {{ . }}
+      {{- end }}
+      http:
+        paths:
+          # API + swagger go straight to FastAPI, everything else is the React app
+          - path: /api
+            pathType: Prefix
+            backend: {service: {name: {{ .Release.Name }}-backend, port: {name: http}}}
+          - path: /docs
+            pathType: Prefix
+            backend: {service: {name: {{ .Release.Name }}-backend, port: {name: http}}}
+          - path: /openapi.json
+            pathType: Exact
+            backend: {service: {name: {{ .Release.Name }}-backend, port: {name: http}}}
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: {{ .Release.Name }}-frontend, port: {name: http}}}
+{{- end }}
