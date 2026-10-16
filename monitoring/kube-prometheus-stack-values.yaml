@@ -1,0 +1,56 @@
+# values for prometheus-community/kube-prometheus-stack
+# install: helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+#            -n monitoring --create-namespace -f monitoring/kube-prometheus-stack-values.yaml
+
+prometheus:
+  prometheusSpec:
+    # by default the operator only watches ServiceMonitors labelled with its own release name.
+    # false = pick up every ServiceMonitor/PodMonitor/rule in every namespace (incl. stockpilot)
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    scrapeInterval: 15s
+    retention: 3d
+    resources:
+      requests: {cpu: 200m, memory: 512Mi}
+      limits: {memory: 1Gi}
+
+grafana:
+  enabled: true
+  # demo credential, override with --set grafana.adminPassword=... anywhere real
+  adminPassword: stockpilot-admin
+  defaultDashboardsTimezone: browser
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      # the StockPilot dashboard ConfigMap lives in the app namespace, not here
+      searchNamespace: ALL
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts: [grafana.localhost]
+    path: /
+
+alertmanager:
+  # rules still evaluate and show on the Prometheus /alerts page;
+  # no notification routing needed for the demo
+  enabled: false
+
+kube-state-metrics:
+  # lets dashboards show HPA replica counts and deployment availability
+  metricLabelsAllowlist:
+    - pods=[app.kubernetes.io/name,app.kubernetes.io/component]
+
+# control-plane components we can't scrape: on EKS AWS runs them (no access), on kind they
+# listen on 127.0.0.1 only. left enabled they just sit DOWN on the targets page and fire alerts
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false

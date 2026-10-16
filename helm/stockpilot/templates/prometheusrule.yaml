@@ -1,0 +1,32 @@
+{{- if and .Values.monitoring.serviceMonitor.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-alerts
+  labels: {{- include "stockpilot.labels" (dict "root" . "component" "monitoring") | nindent 4 }}
+spec:
+  groups:
+    - name: stockpilot.rules
+      rules:
+        - alert: StockPilotBackendDown
+          expr: absent(up{namespace="{{ .Release.Namespace }}", service="{{ .Release.Name }}-backend"} == 1)
+          for: 2m
+          labels: {severity: critical}
+          annotations:
+            summary: No StockPilot backend pod is being scraped successfully
+        - alert: StockPilotHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{namespace="{{ .Release.Namespace }}", status="5xx"}[5m]))
+              / clamp_min(sum(rate(http_requests_total{namespace="{{ .Release.Namespace }}"}[5m])), 1e-9) > 0.05
+          for: 5m
+          labels: {severity: warning}
+          annotations:
+            summary: More than 5% of StockPilot API requests are failing
+        - alert: StockPilotSlowRequests
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(http_request_duration_highr_seconds_bucket{namespace="{{ .Release.Namespace }}"}[5m]))) > 1
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: StockPilot p95 latency is above 1s
+{{- end }}
