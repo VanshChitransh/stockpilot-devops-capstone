@@ -1,0 +1,30 @@
+# rendered by the nginx image's envsubst step at startup,
+# so the same image works in compose (backend:8000) and k8s (<release>-backend:8000)
+server {
+  listen 8080;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  location / {
+    try_files $uri /index.html;
+  }
+
+  location /assets/ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+  }
+
+  location /api/ {
+    proxy_pass http://${BACKEND_HOST}:8000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+
+  location = /healthz {
+    access_log off;
+    return 200 "ok\n";
+  }
+}
