@@ -244,6 +244,8 @@ push ─────┤                  ├──► build-scan-push ──► 
 - **Least privilege.** Default `contents: read`; only the push job gets `packages: write`.
 - `concurrency` cancels superseded runs.
 
+First run, all four jobs green: [actions/runs/38928639839](https://github.com/VanshChitransh/stockpilot-devops-capstone/actions/runs/38928639839). Images: [`stockpilot-backend`](https://github.com/users/VanshChitransh/packages/container/package/stockpilot-backend) and [`stockpilot-frontend`](https://github.com/users/VanshChitransh/packages/container/package/stockpilot-frontend) on GHCR, tagged with the commit SHA.
+
 ![pipeline](docs/screenshots/05-actions-pipeline.png)
 
 ---
@@ -270,6 +272,12 @@ Other controls in the pipeline and cluster:
 | CI | least-privilege `GITHUB_TOKEN` permissions |
 
 Scanners we don't run, and what they would add: SAST (Semgrep, CodeQL) for bugs in our own code; dependency scanning (Dependabot) for PRs on vulnerable pins; secret scanning (gitleaks) for leaked credentials; runtime security (Falco) for suspicious behaviour in running containers.
+
+The same gate in the pipeline (both images clean, exit 0):
+
+![trivy in CI](docs/screenshots/23-ci-trivy-log.png)
+
+Locally, before and after the pip fix:
 
 ![trivy](docs/screenshots/06-trivy-scan.png)
 
@@ -474,8 +482,8 @@ Details and PromQL: [`monitoring/README.md`](monitoring/README.md).
 | M2 Testing | `backend/tests/`, `backend/pytest.ini` · screenshot 02 |
 | M3 Git | commit history, `.gitignore` |
 | M4 Docker | `backend/Dockerfile`, `frontend/Dockerfile` (multi-stage), non-root users, `docker-compose.yml` · screenshots 03, 04 |
-| M5 CI/CD | `.github/workflows/ci-cd.yml` · Actions run · GHCR packages |
-| M6 Trivy | scan steps in the workflow, [section 7](#7-security-scanning-trivy) explanation · screenshot 06 |
+| M5 CI/CD | `.github/workflows/ci-cd.yml` · [Actions run](https://github.com/VanshChitransh/stockpilot-devops-capstone/actions/runs/38928639839) · GHCR packages · screenshot 05 |
+| M6 Trivy | scan steps in the workflow, [section 7](#7-security-scanning-trivy) explanation · screenshots 06, 23 |
 | M7 Terraform | `terraform/*.tf`, `terraform.tfvars.example`, `terraform/README.md`, run via LocalStack ([section 8](#8-terraform-aws-vpc--eks)) · screenshots 19–22 |
 | M8 Kubernetes + Helm | `k8s/`, `helm/stockpilot/` · screenshots 07, 08 |
 | M9 Observability | `/metrics`, `monitoring/`, ServiceMonitor, dashboard · screenshots 10–12 |
