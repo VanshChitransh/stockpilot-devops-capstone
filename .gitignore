@@ -1,0 +1,34 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.db
+
+# node
+node_modules/
+dist/
+
+# secrets / env
+.env
+*.pem
+kubeconfig*
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# editors / os
+.idea/
+.vscode/
+.DS_Store
+*.log
+
+# terraform-localstack.sh writes these on the fly
+*_override.tf
+terraform.tfstate.d/
