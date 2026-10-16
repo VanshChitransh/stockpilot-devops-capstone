@@ -1,0 +1,4 @@
+# test-only deps, kept out of the production image
+-r requirements.txt
+pytest==9.1.1
+httpx==0.28.1
