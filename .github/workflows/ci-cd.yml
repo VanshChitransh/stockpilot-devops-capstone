@@ -1,0 +1,233 @@
+name: StockPilot CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# least privilege by default; jobs that push images ask for more
+permissions:
+  contents: read
+
+# a newer push to the same branch cancels the older, still-running pipeline
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # pinned by digest: a moved tag can't swap the scanner under us
+  TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+
+jobs:
+  # ---------------------------------------------------------------- stage 1: test
+  test:
+    name: Test (pytest + frontend build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        working-directory: backend
+        run: pytest -v
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+  lint-iac:
+    name: Lint IaC (terraform + helm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+
+      - name: terraform fmt
+        working-directory: terraform
+        run: terraform fmt -check -recursive
+
+      - name: terraform validate
+        working-directory: terraform
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - uses: azure/setup-helm@v5
+
+      - name: helm lint + render
+        run: |
+          helm lint helm/stockpilot
+          helm template stockpilot helm/stockpilot -f helm/stockpilot/values-prod.yaml > /dev/null
+
+  # ------------------------------------------------- stage 2: build, scan, push
+  build-scan-push:
+    name: Build, scan (Trivy), push to GHCR
+    needs: [test, lint-iac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compute image names
+        id: img
+        run: |
+          # docker refs must be lowercase, GitHub usernames often aren't
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "backend=$REGISTRY/$owner/stockpilot-backend:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "frontend=$REGISTRY/$owner/stockpilot-frontend:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build backend image
+        run: |
+          docker build ./backend -t "${{ steps.img.outputs.backend }}" \
+            --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
+            --label org.opencontainers.image.revision=$GITHUB_SHA
+
+      - name: Build frontend image
+        run: |
+          docker build ./frontend -t "${{ steps.img.outputs.frontend }}" \
+            --label org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }} \
+            --label org.opencontainers.image.revision=$GITHUB_SHA
+
+      - name: Trivy scan backend (fail on fixable HIGH/CRITICAL)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            "${{ steps.img.outputs.backend }}"
+
+      - name: Trivy scan frontend (fail on fixable HIGH/CRITICAL)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress \
+            "${{ steps.img.outputs.frontend }}"
+
+      # only reached when tests AND both scans passed. PRs build + scan but never push
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push images (tag = commit SHA)
+        if: github.event_name != 'pull_request'
+        run: |
+          docker push "${{ steps.img.outputs.backend }}"
+          docker push "${{ steps.img.outputs.frontend }}"
+          echo "### Images pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ steps.img.outputs.backend }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ steps.img.outputs.frontend }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------ stage 3: deploy
+  # with EKS configured (repo variable EKS_CLUSTER_NAME + AWS secrets) this deploys there.
+  # without it, the same chart + the same SHA images are deployed to a throwaway kind
+  # cluster inside the runner and smoke-tested, so every main commit still proves it deploys.
+  deploy:
+    name: Deploy with Helm
+    needs: build-scan-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: azure/setup-helm@v5
+
+      - name: Compute image names
+        id: img
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "backend=$REGISTRY/$owner/stockpilot-backend" >> "$GITHUB_OUTPUT"
+          echo "frontend=$REGISTRY/$owner/stockpilot-frontend" >> "$GITHUB_OUTPUT"
+
+      # --- target: AWS EKS
+      - name: Configure AWS credentials
+        if: env.EKS_CLUSTER_NAME != ''
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Point kubectl at EKS
+        if: env.EKS_CLUSTER_NAME != ''
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+
+      # --- target: ephemeral kind cluster
+      - name: Create kind cluster
+        if: env.EKS_CLUSTER_NAME == ''
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ci
+
+      - name: Load SHA images into kind
+        if: env.EKS_CLUSTER_NAME == ''
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "${{ steps.img.outputs.backend }}:$GITHUB_SHA"
+          docker pull "${{ steps.img.outputs.frontend }}:$GITHUB_SHA"
+          kind load docker-image --name ci "${{ steps.img.outputs.backend }}:$GITHUB_SHA" "${{ steps.img.outputs.frontend }}:$GITHUB_SHA"
+
+      # --- same deploy command for both targets
+      - name: helm upgrade --install
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          extra=()
+          [ -n "$EKS_CLUSTER_NAME" ] && extra+=(-f helm/stockpilot/values-prod.yaml)
+          [ -n "$DB_PASSWORD" ] && extra+=(--set-string "postgres.password=$DB_PASSWORD")
+          # --atomic: if pods never become ready, helm rolls back to the last good release
+          helm upgrade --install stockpilot ./helm/stockpilot -n stockpilot "${extra[@]}" \
+            --set backend.image="${{ steps.img.outputs.backend }}" \
+            --set frontend.image="${{ steps.img.outputs.frontend }}" \
+            --set backend.tag="$GITHUB_SHA" \
+            --set frontend.tag="$GITHUB_SHA" \
+            --atomic --wait --timeout 8m
+
+      - name: Smoke test through the frontend service
+        run: |
+          kubectl get pods,svc,ingress,hpa -n stockpilot -o wide
+          kubectl port-forward -n stockpilot svc/stockpilot-frontend 8080:80 >/dev/null 2>&1 &
+          sleep 5
+          curl -fsS http://localhost:8080/healthz
+          curl -fsS http://localhost:8080/api/stats
+          echo
+          echo "### Deployed \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          helm history stockpilot -n stockpilot >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Debug info on failure
+        if: failure()
+        run: |
+          kubectl get events -n stockpilot --sort-by=.lastTimestamp | tail -30
+          kubectl describe pods -n stockpilot | tail -80
