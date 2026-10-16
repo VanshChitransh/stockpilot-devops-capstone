@@ -1,0 +1,15 @@
+# SYMPTOM: pods are Running and Ready, but calling the Service times out / connection refused
+# CAUSE:   the selector says component=api, the backend pods are labelled component=backend,
+#          so the Service matches zero pods and has no endpoints
+apiVersion: v1
+kind: Service
+metadata:
+  name: broken-service
+  namespace: stockpilot
+spec:
+  selector:
+    app.kubernetes.io/name: stockpilot
+    app.kubernetes.io/component: api
+  ports:
+    - port: 8000
+      targetPort: 8000

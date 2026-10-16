@@ -1,0 +1,30 @@
+# SYMPTOM: pod stuck in ErrImagePull / ImagePullBackOff
+# CAUSE:   the tag doesn't exist in the registry (typo'd release tag)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-image
+  namespace: stockpilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {lab: broken-image}
+  template:
+    metadata:
+      labels: {lab: broken-image}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: backend
+          image: ghcr.io/vanshchitransh/stockpilot-backend:v1.0.0-typo
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: stockpilot-db, key: DATABASE_URL}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}

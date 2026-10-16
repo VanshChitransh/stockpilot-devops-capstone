@@ -1,0 +1,32 @@
+# SYMPTOM: pod goes Running -> Error -> CrashLoopBackOff, restart count keeps climbing
+# CAUSE:   DATABASE_URL points at "stockpilot-postgresql" (typo, the service is "stockpilot-postgres"),
+#          so `alembic upgrade head` can't resolve the host and the container exits 1
+# NOTE:    uses the locally loaded kind image; on EKS swap in the ghcr.io image
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-config
+  namespace: stockpilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {lab: broken-config}
+  template:
+    metadata:
+      labels: {lab: broken-config}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: backend
+          image: stockpilot-backend:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DATABASE_URL
+              value: postgresql+psycopg://stockpilot:stockpilot@stockpilot-postgresql:5432/stockpilot
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 64Mi}
